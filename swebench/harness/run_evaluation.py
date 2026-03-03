@@ -4,7 +4,6 @@ import docker
 import json
 import platform
 import threading
-import time
 import traceback
 
 if platform.system() == "Linux":
@@ -155,58 +154,6 @@ def run_instance(
         )
         container.start()
         logger.info(f"Container for {instance_id} started: {container.id}")
-
-        # Wait for container to be running (avoids 409 "container is not running" on exec)
-        # #region agent log
-        _wait_s, _max_wait = 0.5, 10
-        time.sleep(1)  # allow container to stabilize or exit so we can capture logs if it exits
-        for _ in range(int(_max_wait / _wait_s)):
-            container.reload()
-            if container.status == "running":
-                break
-            if container.status == "exited":
-                _log_path = Path("/home/zhanggaohua/code/dev/SWE-bench/.cursor/debug.log")
-                try:
-                    _logs = container.logs(tail=50).decode("utf-8", errors="replace")
-                except Exception:
-                    _logs = ""
-                open(_log_path, "a").write(
-                    json.dumps(
-                        {
-                            "hypothesisId": "H2",
-                            "location": "run_evaluation.py:run_instance",
-                            "message": "container exited shortly after start",
-                            "data": {"instance_id": instance_id, "status": container.status, "container_logs_tail": _logs[:1000]},
-                            "timestamp": int(time.time() * 1000),
-                        }
-                    )
-                    + "\n"
-                )
-                raise RuntimeError(
-                    f"Container for {instance_id} exited shortly after start (status=exited). "
-                    f"Container logs:\n{_logs[:1500]}"
-                )
-            time.sleep(_wait_s)
-        else:
-            _log_path = Path("/home/zhanggaohua/code/dev/SWE-bench/.cursor/debug.log")
-            _logs = container.logs(tail=50).decode("utf-8", errors="replace") if container.status != "running" else ""
-            open(_log_path, "a").write(
-                json.dumps(
-                    {
-                        "hypothesisId": "H2",
-                        "location": "run_evaluation.py:run_instance",
-                        "message": "container not running after start",
-                        "data": {"instance_id": instance_id, "status": container.status, "container_logs_tail": _logs[:500]},
-                        "timestamp": int(time.time() * 1000),
-                    }
-                )
-                + "\n"
-            )
-            raise RuntimeError(
-                f"Container for {instance_id} not running after {_max_wait}s (status={container.status}). "
-                f"Check container logs: docker logs {container.id}"
-            )
-        # #endregion
 
         # Copy model prediction as patch file to container
         patch_file = Path(log_dir / "patch.diff")

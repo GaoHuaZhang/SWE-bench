@@ -54,15 +54,34 @@ def get_environment_yml_by_commit(repo: str, commit: str, env_name: str) -> str:
 
 def _strip_conda_build_strings(yml_text: str) -> str:
     """
-    Strip conda build strings (e.g. =h06a4308_0) from dependency lines so conda
-    can resolve packages for the current platform (e.g. aarch64 when yml has x86_64 pins).
+    Strip conda build strings (e.g. =h06a4308_0) from conda dependency lines so
+    conda can resolve packages for the current platform (e.g. aarch64 when yml
+    has x86_64 pins). Do NOT touch the pip section.
     """
-    lines = []
+    lines: list[str] = []
+    in_pip = False
+    pip_indent = 0
     for line in yml_text.split("\n"):
-        # "  - pkg=version=build" -> "  - pkg=version" so conda resolves for current arch
-        if line.strip().startswith("-") and line.count("=") >= 2:
-            parts = line.split("=", 2)
-            line = "=".join(parts[:2])
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+
+        # Track when we're inside the pip: section
+        if stripped.startswith("- pip:"):
+            in_pip = True
+            pip_indent = indent
+            lines.append(line)
+            continue
+        if in_pip and stripped.startswith("- ") and indent <= pip_indent:
+            # New top-level dependency list; leave pip section
+            in_pip = False
+
+        # Only strip build strings for non-pip conda deps, e.g. "- pkg=ver=build"
+        if (not in_pip) and stripped.startswith("- ") and "=" in stripped and "==" not in stripped:
+            parts = stripped.split("=", 2)
+            if len(parts) == 3:
+                new_stripped = parts[0] + "=" + parts[1]
+                line = " " * indent + new_stripped
+
         lines.append(line)
     return "\n".join(lines)
 

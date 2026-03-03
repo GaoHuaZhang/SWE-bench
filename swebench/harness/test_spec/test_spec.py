@@ -157,6 +157,7 @@ def get_test_specs_from_dataset(
     namespace: Optional[str] = None,
     instance_image_tag: str = LATEST,
     env_image_tag: str = LATEST,
+    arch: str = "x86_64",
 ) -> list[TestSpec]:
     """
     Idempotent function that converts a list of SWEbenchInstance objects to a list of TestSpec objects.
@@ -165,7 +166,13 @@ def get_test_specs_from_dataset(
         return cast(list[TestSpec], dataset)
     return list(
         map(
-            lambda x: make_test_spec(x, namespace, instance_image_tag, env_image_tag),
+            lambda x: make_test_spec(
+                x,
+                namespace=namespace,
+                instance_image_tag=instance_image_tag,
+                env_image_tag=env_image_tag,
+                arch=arch,
+            ),
             cast(list[SWEbenchInstance], dataset),
         )
     )
@@ -212,7 +219,7 @@ def make_test_spec(
     repo_script_list = make_repo_script_list(
         specs, repo, repo_directory, base_commit, env_name
     )
-    env_script_list = make_env_script_list(instance, specs, env_name)
+    env_script_list = make_env_script_list(instance, specs, env_name, arch)
     eval_script_list = make_eval_script_list(
         instance, specs, env_name, repo_directory, base_commit, test_patch
     )

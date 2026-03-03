@@ -42,7 +42,7 @@ def make_repo_script_list_common(
     return setup_commands
 
 
-def make_env_script_list_common(instance, specs, env_name) -> list:
+def make_env_script_list_common(instance, specs, env_name, arch: str = "x86_64") -> list:
     """
     Creates the list of commands to set up the environment for testing.
     This is the setup script for the environment image.

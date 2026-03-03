@@ -52,6 +52,21 @@ def get_environment_yml_by_commit(repo: str, commit: str, env_name: str) -> str:
     return "\n".join(cleaned)
 
 
+def _strip_conda_build_strings(yml_text: str) -> str:
+    """
+    Strip conda build strings (e.g. =h06a4308_0) from dependency lines so conda
+    can resolve packages for the current platform (e.g. aarch64 when yml has x86_64 pins).
+    """
+    lines = []
+    for line in yml_text.split("\n"):
+        # "  - pkg=version=build" -> "  - pkg=version" so conda resolves for current arch
+        if line.strip().startswith("-") and line.count("=") >= 2:
+            parts = line.split("=", 2)
+            line = "=".join(parts[:2])
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def clean_environment_yml(yml_text: str) -> str:
     """
     Clean environment.yml by removing packages that have been yanked from PyPI
@@ -318,9 +333,11 @@ def make_repo_script_list_py(
 
 
 def make_env_script_list_py_from_conda(
-    instance, specs, env_name, cached_environment_yml
+    instance, specs, env_name, cached_environment_yml, arch: str = "x86_64"
 ) -> list:
     HEREDOC_DELIMITER = "EOF_59812759871"
+    if arch == "arm64":
+        cached_environment_yml = _strip_conda_build_strings(cached_environment_yml)
     reqs_commands = [
         "source /opt/miniconda3/bin/activate",
         f"cat <<'{HEREDOC_DELIMITER}' > /root/environment.yml\n{cached_environment_yml}\n{HEREDOC_DELIMITER}",
@@ -330,7 +347,7 @@ def make_env_script_list_py_from_conda(
     return reqs_commands
 
 
-def make_env_script_list_py(instance, specs, env_name) -> list:
+def make_env_script_list_py(instance, specs, env_name, arch: str = "x86_64") -> list:
     """
     Creates the list of commands to set up the conda environment for testing.
     This is the setup script for the environment image.
@@ -338,7 +355,7 @@ def make_env_script_list_py(instance, specs, env_name) -> list:
     cached_environment_yml = load_cached_environment_yml(instance["instance_id"])
     if cached_environment_yml:
         return make_env_script_list_py_from_conda(
-            instance, specs, env_name, cached_environment_yml
+            instance, specs, env_name, cached_environment_yml, arch
         )
     HEREDOC_DELIMITER = "EOF_59812759871"
     reqs_commands = [

@@ -4,6 +4,7 @@ import docker
 import json
 import platform
 import threading
+import time
 import traceback
 
 if platform.system() == "Linux":
@@ -155,6 +156,58 @@ def run_instance(
         container.start()
         logger.info(f"Container for {instance_id} started: {container.id}")
 
+        # Wait for container to be running (avoids 409 "container is not running" on exec)
+        # #region agent log
+        _wait_s, _max_wait = 0.5, 10
+        time.sleep(1)  # allow container to stabilize or exit so we can capture logs if it exits
+        for _ in range(int(_max_wait / _wait_s)):
+            container.reload()
+            if container.status == "running":
+                break
+            if container.status == "exited":
+                _log_path = Path("/home/zhanggaohua/code/dev/SWE-bench/.cursor/debug.log")
+                try:
+                    _logs = container.logs(tail=50).decode("utf-8", errors="replace")
+                except Exception:
+                    _logs = ""
+                open(_log_path, "a").write(
+                    json.dumps(
+                        {
+                            "hypothesisId": "H2",
+                            "location": "run_evaluation.py:run_instance",
+                            "message": "container exited shortly after start",
+                            "data": {"instance_id": instance_id, "status": container.status, "container_logs_tail": _logs[:1000]},
+                            "timestamp": int(time.time() * 1000),
+                        }
+                    )
+                    + "\n"
+                )
+                raise RuntimeError(
+                    f"Container for {instance_id} exited shortly after start (status=exited). "
+                    f"Container logs:\n{_logs[:1500]}"
+                )
+            time.sleep(_wait_s)
+        else:
+            _log_path = Path("/home/zhanggaohua/code/dev/SWE-bench/.cursor/debug.log")
+            _logs = container.logs(tail=50).decode("utf-8", errors="replace") if container.status != "running" else ""
+            open(_log_path, "a").write(
+                json.dumps(
+                    {
+                        "hypothesisId": "H2",
+                        "location": "run_evaluation.py:run_instance",
+                        "message": "container not running after start",
+                        "data": {"instance_id": instance_id, "status": container.status, "container_logs_tail": _logs[:500]},
+                        "timestamp": int(time.time() * 1000),
+                    }
+                )
+                + "\n"
+            )
+            raise RuntimeError(
+                f"Container for {instance_id} not running after {_max_wait}s (status={container.status}). "
+                f"Check container logs: docker logs {container.id}"
+            )
+        # #endregion
+
         # Copy model prediction as patch file to container
         patch_file = Path(log_dir / "patch.diff")
         patch_file.write_text(pred[KEY_PREDICTION] or "")
@@ -286,6 +339,7 @@ def run_instances(
     instance_image_tag: str = "latest",
     env_image_tag: str = "latest",
     rewrite_reports: bool = False,
+    arch: str = "x86_64",
 ):
     """
     Run all instances for the given predictions in parallel.
@@ -308,6 +362,7 @@ def run_instances(
                 namespace=namespace,
                 instance_image_tag=instance_image_tag,
                 env_image_tag=env_image_tag,
+                arch=arch,
             ),
             instances,
         )
@@ -489,6 +544,7 @@ def main(
     instance_image_tag: str = "latest",
     env_image_tag: str = "latest",
     report_dir: str = ".",
+    arch: str | None = None,
 ):
     """
     Run evaluation harness for the given dataset and predictions.
@@ -509,6 +565,20 @@ def main(
 
     if force_rebuild and namespace is not None:
         raise ValueError("Cannot force rebuild and use a namespace at the same time.")
+
+    # Architecture for Docker images: override or auto-detect (avoids "exec format error" and ARM conda pin issues)
+    _machine = platform.machine().lower()
+    _native_arch = "arm64" if _machine in ("aarch64", "arm64") else "x86_64"
+    if arch is not None:
+        host_arch = arch
+        if _native_arch == "arm64" and host_arch == "x86_64":
+            print(
+                "Note: You are on an ARM64 host with --arch x86_64. Building x86_64 images on ARM may fail with "
+                "'Exec format error' if Docker is not using QEMU emulation. If base image build fails, try "
+                "--arch arm64 (native), or run on an x86_64 host, or use --modal true."
+            )
+    else:
+        host_arch = _native_arch
 
     # load predictions as map of instance_id to prediction
     predictions = get_predictions_from_file(predictions_path, dataset_name, split)
@@ -548,6 +618,7 @@ def main(
                 namespace,
                 instance_image_tag,
                 env_image_tag,
+                arch=host_arch,
             )
         run_instances(
             predictions,
@@ -562,6 +633,7 @@ def main(
             instance_image_tag=instance_image_tag,
             env_image_tag=env_image_tag,
             rewrite_reports=rewrite_reports,
+            arch=host_arch,
         )
 
     # clean images + make final report
@@ -668,6 +740,13 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--report_dir", type=str, default=".", help="Directory to write reports to"
+    )
+    parser.add_argument(
+        "--arch",
+        type=str,
+        default=None,
+        choices=["x86_64", "arm64"],
+        help="Override Docker image architecture (default: auto-detect from host). Use x86_64 if on ARM and env build fails due to conda package pins.",
     )
 
     # Modal execution args

@@ -1,0 +1,9 @@
+{
+    "deepseek_v3_2": {
+        "litellm_provider": "openai",
+        "model_name": "deepseek_v3_2",
+        "api_base": "http://127.0.0.1:2998/v1",
+        "api_key": "EMPTY",
+        "api_type": "openai"
+    }
+}

@@ -347,6 +347,7 @@ def build_instance_images(
     namespace: str = None,
     tag: str = None,
     env_image_tag: str = None,
+    arch: str = "x86_64",
 ):
     """
     Builds the instance images required for the dataset if they do not already exist.
@@ -356,6 +357,7 @@ def build_instance_images(
         client (docker.DockerClient): Docker client to use for building the images
         force_rebuild (bool): Whether to force rebuild the images even if they already exist
         max_workers (int): Maximum number of workers to use for building images
+        arch (str): Architecture to build for (x86_64 or arm64).
     """
     # Build environment images (and base images as needed) first
     test_specs = list(
@@ -365,6 +367,7 @@ def build_instance_images(
                 namespace=namespace,
                 instance_image_tag=tag,
                 env_image_tag=env_image_tag,
+                arch=arch,
             ),
             dataset,
         )

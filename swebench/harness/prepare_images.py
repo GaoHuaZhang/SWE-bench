@@ -10,6 +10,12 @@ from swebench.harness.test_spec.test_spec import make_test_spec
 from swebench.harness.utils import load_swebench_dataset, str2bool, optional_str
 
 
+def _detect_arch():
+    import platform
+    m = platform.machine().lower()
+    return "arm64" if m in ("aarch64", "arm64") else "x86_64"
+
+
 def filter_dataset_to_build(
     dataset: list,
     instance_ids: list | None,
@@ -18,6 +24,7 @@ def filter_dataset_to_build(
     namespace: str = None,
     tag: str = None,
     env_image_tag: str = None,
+    arch: str = "x86_64",
 ):
     """
     Filter the dataset to only include instances that need to be built.
@@ -53,6 +60,7 @@ def filter_dataset_to_build(
             namespace=namespace,
             instance_image_tag=tag,
             env_image_tag=env_image_tag,
+            arch=arch,
         )
         if force_rebuild:
             data_to_build.append(instance)
@@ -72,6 +80,7 @@ def main(
     namespace,
     tag,
     env_image_tag,
+    arch,
 ):
     """
     Build Docker images for the specified instances.
@@ -81,7 +90,11 @@ def main(
         max_workers (int): Number of workers for parallel processing.
         force_rebuild (bool): Whether to force rebuild all images.
         open_file_limit (int): Open file limit.
+        arch (str): Architecture to build for (x86_64 or arm64). Defaults to host arch on ARM.
     """
+    if arch is None:
+        arch = _detect_arch()
+        print(f"Using detected architecture: {arch}")
     # Set open file limit
     resource.setrlimit(resource.RLIMIT_NOFILE, (open_file_limit, open_file_limit))
     client = docker.from_env()
@@ -89,7 +102,7 @@ def main(
     # Filter out instances that were not specified
     dataset = load_swebench_dataset(dataset_name, split)
     dataset = filter_dataset_to_build(
-        dataset, instance_ids, client, force_rebuild, namespace, tag, env_image_tag
+        dataset, instance_ids, client, force_rebuild, namespace, tag, env_image_tag, arch
     )
 
     if len(dataset) == 0:
@@ -105,6 +118,7 @@ def main(
         namespace=namespace,
         tag=tag,
         env_image_tag=env_image_tag,
+        arch=arch,
     )
     print(f"Successfully built {len(successful)} images")
     print(f"Failed to build {len(failed)} images")
@@ -141,10 +155,17 @@ if __name__ == "__main__":
         help="Namespace to use for the images (default: None)",
     )
     parser.add_argument(
-        "--tag", type=str, default=None, help="Tag to use for the images"
+        "--tag", type=str, default="latest", help="Tag to use for the images"
     )
     parser.add_argument(
-        "--env_image_tag", type=str, default=None, help="Environment image tag to use"
+        "--env_image_tag", type=str, default="latest", help="Environment image tag to use"
+    )
+    parser.add_argument(
+        "--arch",
+        type=str,
+        default=None,
+        choices=["x86_64", "arm64"],
+        help="Architecture to build (default: auto-detect from host, e.g. arm64 on M-series/ARM)",
     )
     args = parser.parse_args()
     main(**vars(args))

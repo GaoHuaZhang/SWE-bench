@@ -93,13 +93,19 @@ ENGINES = {
 def calc_cost(model_name, input_tokens, output_tokens):
     """
     Calculates the cost of a response from the openai API.
-
-    Args:
-    response (openai.ChatCompletion): The response from the API.
-
-    Returns:
-    float: The cost of the response.
+    For non-OpenAI models (e.g., custom vLLM-served models) that are not present
+    in the MODEL_COST_PER_* tables, this function returns 0 and logs the event.
     """
+    if (
+        model_name not in MODEL_COST_PER_INPUT
+        or model_name not in MODEL_COST_PER_OUTPUT
+    ):
+        logger.info(
+            f"Skipping cost calculation for unknown model '{model_name}'. "
+            f"input_tokens={input_tokens}, output_tokens={output_tokens}"
+        )
+        return 0.0
+
     cost = (
         MODEL_COST_PER_INPUT[model_name] * input_tokens
         + MODEL_COST_PER_OUTPUT[model_name] * output_tokens
@@ -174,6 +180,7 @@ def claude_tokenize(string: str, api) -> int:
 def openai_inference(
     test_dataset,
     model_name_or_path,
+    limit_model_name,
     output_file,
     model_args,
     existing_ids,
@@ -190,9 +197,9 @@ def openai_inference(
     existing_ids (set): A set of ids that have already been processed.
     max_cost (float): The maximum cost to spend on inference.
     """
-    encoding = tiktoken.encoding_for_model(model_name_or_path)
+    encoding = tiktoken.encoding_for_model(limit_model_name)
     test_dataset = test_dataset.filter(
-        lambda x: gpt_tokenize(x["text"], encoding) <= MODEL_LIMITS[model_name_or_path],
+        lambda x: gpt_tokenize(x["text"], encoding) <= MODEL_LIMITS[limit_model_name],
         desc="Filtering",
         load_from_cache_file=False,
     )
@@ -323,6 +330,7 @@ def call_anthropic_v2(
 def anthropic_inference(
     test_dataset,
     model_name_or_path,
+    limit_model_name,
     output_file,
     model_args,
     existing_ids,
@@ -348,7 +356,7 @@ def anthropic_inference(
     anthropic = Anthropic(api_key=api_key)
     test_dataset = test_dataset.filter(
         lambda x: claude_tokenize(x["text"], anthropic)
-        <= MODEL_LIMITS[model_name_or_path],
+        <= MODEL_LIMITS[limit_model_name],
         desc="Filtering",
         load_from_cache_file=False,
     )
@@ -448,6 +456,7 @@ def main(
     output_dir,
     model_args,
     max_cost,
+    limit_model_name=None,
 ):
     if shard_id is None and num_shards is not None:
         logger.warning(
@@ -494,6 +503,7 @@ def main(
     inference_args = {
         "test_dataset": dataset,
         "model_name_or_path": model_name_or_path,
+        "limit_model_name": limit_model_name,
         "output_file": output_file,
         "model_args": model_args,
         "existing_ids": existing_ids,
@@ -501,10 +511,9 @@ def main(
     }
     if model_name_or_path.startswith("claude"):
         anthropic_inference(**inference_args)
-    elif model_name_or_path.startswith("gpt"):
-        openai_inference(**inference_args)
     else:
-        raise ValueError(f"Invalid model name or path {model_name_or_path}")
+        # Default to OpenAI-compatible backend (e.g., OpenAI, Azure, vLLM server)
+        openai_inference(**inference_args)
     logger.info("Done!")
 
 
@@ -525,8 +534,22 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model_name_or_path",
         type=str,
-        help="Name of API model. Update MODEL* constants in this file to add new models.",
+        required=True,
+        help=(
+            "External model identifier used in outputs and as the API model name "
+            "(e.g., qwen3-32b-vllm). For context-length limits and tokenizer, "
+            "use --limit_model_name."
+        ),
+    )
+    parser.add_argument(
+        "--limit_model_name",
+        type=str,
+        required=True,
         choices=sorted(list(MODEL_LIMITS.keys())),
+        help=(
+            "Model name used for context-length limits and tiktoken encoding, "
+            "must be a key in MODEL_LIMITS (e.g., gpt-4-0613, gpt-4-32k-0613)."
+        ),
     )
     parser.add_argument(
         "--shard_id",
